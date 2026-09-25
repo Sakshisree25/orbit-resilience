@@ -242,7 +242,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const refreshSharedVideo = useCallback(async () => {
     try {
       setIsSharedVideoLoading(true);
-      const res = await fetch('/api/video');
+      const res = await fetch('/api/video', { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
         if (data.hasVideo && data.video) {

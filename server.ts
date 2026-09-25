@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
 import multer from 'multer';
@@ -14,11 +14,34 @@ const isProd = process.env.NODE_ENV === 'production';
 // Persistent storage directory for shared walkthrough video
 const UPLOAD_DIR = path.resolve(__dirname, 'uploads', 'video');
 const META_FILE = path.join(UPLOAD_DIR, 'meta.json');
+const PUBLIC_DIR = path.resolve(__dirname, 'public');
 
-// Ensure upload directory exists
+// Ensure upload and public directories exist
 if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 }
+if (!fs.existsSync(PUBLIC_DIR)) {
+  fs.mkdirSync(PUBLIC_DIR, { recursive: true });
+}
+
+// Global CORS & Cross-Origin-Resource-Policy headers
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Access-Control-Expose-Headers', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
+  next();
+});
+
+// Serve /uploads statically with cross-origin headers
+app.use('/uploads', express.static(path.resolve(__dirname, 'uploads'), {
+  setHeaders: (res) => {
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  },
+}));
 
 // Interface for persistent video metadata
 interface SharedVideoMeta {
@@ -43,7 +66,8 @@ function getStoredVideoMeta(): SharedVideoMeta | null {
       // If it's a local file, ensure file exists on disk
       if (meta.sourceType === 'file') {
         const filePath = path.join(UPLOAD_DIR, meta.fileName);
-        if (!fs.existsSync(filePath)) {
+        const publicFile = path.join(PUBLIC_DIR, 'orbit-walkthrough.mp4');
+        if (!fs.existsSync(filePath) && !fs.existsSync(publicFile)) {
           return null;
         }
       }
@@ -66,6 +90,10 @@ function deleteStoredVideo(): boolean {
       const filePath = path.join(UPLOAD_DIR, meta.fileName);
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
+      }
+      const publicFile = path.join(PUBLIC_DIR, 'orbit-walkthrough.mp4');
+      if (fs.existsSync(publicFile)) {
+        fs.unlinkSync(publicFile);
       }
     }
     if (fs.existsSync(META_FILE)) {
@@ -106,6 +134,7 @@ app.use(express.json());
 
 // API: Get current active shared video
 app.get('/api/video', (_req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   const meta = getStoredVideoMeta();
   if (!meta) {
     return res.json({ hasVideo: false, video: null });
@@ -122,6 +151,7 @@ app.get('/api/video', (_req: Request, res: Response) => {
       uploadedAt: meta.uploadedAt,
       uploadedBy: meta.uploadedBy,
       streamUrl: meta.sourceType === 'url' ? meta.externalUrl : '/api/video/stream',
+      fallbackUrl: meta.sourceType === 'url' ? meta.externalUrl : '/orbit-walkthrough.mp4',
       mimeType: meta.mimeType,
       sourceType: meta.sourceType,
     },
@@ -132,6 +162,14 @@ app.get('/api/video', (_req: Request, res: Response) => {
 app.post('/api/video/upload', upload.single('video'), (req: Request, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No video file provided' });
+  }
+
+  // Also sync to public directory for direct static serving
+  try {
+    const publicTarget = path.join(PUBLIC_DIR, 'orbit-walkthrough.mp4');
+    fs.copyFileSync(req.file.path, publicTarget);
+  } catch (err) {
+    console.error('Failed to copy to public folder:', err);
   }
 
   // Calculate size format
@@ -169,6 +207,7 @@ app.post('/api/video/upload', upload.single('video'), (req: Request, res: Respon
       uploadedAt: meta.uploadedAt,
       uploadedBy: meta.uploadedBy,
       streamUrl: '/api/video/stream',
+      fallbackUrl: '/orbit-walkthrough.mp4',
       mimeType: meta.mimeType,
       sourceType: 'file',
     },
@@ -216,6 +255,7 @@ app.post('/api/video/url', (req: Request, res: Response) => {
       uploadedAt: meta.uploadedAt,
       uploadedBy: meta.uploadedBy,
       streamUrl: url,
+      fallbackUrl: url,
       mimeType: 'video/mp4',
       sourceType: 'url',
     },
@@ -229,7 +269,10 @@ app.get('/api/video/stream', (req: Request, res: Response) => {
     return res.status(404).json({ error: 'No video file available' });
   }
 
-  const filePath = path.join(UPLOAD_DIR, meta.fileName);
+  let filePath = path.join(UPLOAD_DIR, meta.fileName);
+  if (!fs.existsSync(filePath)) {
+    filePath = path.join(PUBLIC_DIR, 'orbit-walkthrough.mp4');
+  }
   if (!fs.existsSync(filePath)) {
     return res.status(404).json({ error: 'Video file not found on disk' });
   }
@@ -238,27 +281,35 @@ app.get('/api/video/stream', (req: Request, res: Response) => {
   const fileSize = stat.size;
   const range = req.headers.range;
 
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+
   if (range) {
     const parts = range.replace(/bytes=/, '').split('-');
-    const start = parseInt(parts[0], 10);
+    const start = parseInt(parts[0], 10) || 0;
     const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
     const chunksize = end - start + 1;
+
+    if (start >= fileSize || end >= fileSize) {
+      res.setHeader('Content-Range', `bytes */${fileSize}`);
+      return res.status(416).end();
+    }
+
     const file = fs.createReadStream(filePath, { start, end });
-    const head = {
+    res.writeHead(206, {
       'Content-Range': `bytes ${start}-${end}/${fileSize}`,
       'Accept-Ranges': 'bytes',
       'Content-Length': chunksize,
-      'Content-Type': meta.mimeType,
-    };
-    res.writeHead(206, head);
+      'Content-Type': meta.mimeType || 'video/mp4',
+    });
     file.pipe(res);
   } else {
-    const head = {
+    res.writeHead(200, {
       'Content-Length': fileSize,
-      'Content-Type': meta.mimeType,
+      'Content-Type': meta.mimeType || 'video/mp4',
       'Accept-Ranges': 'bytes',
-    };
-    res.writeHead(200, head);
+    });
     fs.createReadStream(filePath).pipe(res);
   }
 });

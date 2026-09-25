@@ -149,6 +149,7 @@ export interface SharedVideo {
   uploadedAt: string;
   uploadedBy: string;
   streamUrl: string;
+  fallbackUrl?: string;
   mimeType: string;
   sourceType: 'file' | 'url';
 }

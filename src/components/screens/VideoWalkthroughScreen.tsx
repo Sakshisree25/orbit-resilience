@@ -275,13 +275,37 @@ Demonstrating ORBIT Intelligence: Synthesizing "What Changed", "What Breaks Firs
               <div className="relative rounded-lg overflow-hidden bg-black border border-slate-800 aspect-video flex items-center justify-center group shadow-xl">
                 <video
                   ref={videoPlayerRef}
-                  src={sharedVideo.streamUrl}
+                  key={sharedVideo.id}
                   controls
                   playsInline
+                  preload="auto"
+                  crossOrigin="anonymous"
                   className="w-full h-full object-contain"
                   onPlay={() => setIsPlaying(true)}
                   onPause={() => setIsPlaying(false)}
-                />
+                  onError={() => {
+                    if (videoPlayerRef.current && !videoPlayerRef.current.src.endsWith('/orbit-walkthrough.mp4')) {
+                      videoPlayerRef.current.src = '/orbit-walkthrough.mp4';
+                      videoPlayerRef.current.load();
+                    }
+                  }}
+                >
+                  <source src={sharedVideo.streamUrl} type={sharedVideo.mimeType || 'video/mp4'} />
+                  <source src="/orbit-walkthrough.mp4" type="video/mp4" />
+                  <source src="/uploads/video/orbit-walkthrough.mp4" type="video/mp4" />
+                  Your browser does not support the video tag.
+                </video>
+
+                {/* Direct stream fallback popout button */}
+                <a
+                  href={sharedVideo.streamUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="absolute top-2 right-2 p-1.5 rounded bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-[10px] font-mono opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 z-10"
+                  title="Open video directly in new tab"
+                >
+                  <span>Open Stream ↗</span>
+                </a>
               </div>
 
               {/* Video Metadata Card */}
