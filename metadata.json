@@ -1,0 +1,6 @@
+{
+  "name": "ORBIT — Operational Routing & Business Intelligence Terminal",
+  "description": "Enterprise disruption decision engine designed for supply chain resilience during sustained Strait of Hormuz closure scenarios.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
